@@ -1,0 +1,22 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1648425395292.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "0",
+    "id" : "B8DC4599",
+    "lastKnownWriteTime" : 1648425767,
+    "last_content_update" : 1648425767080,
+    "path" : "C:/Users/Nick/Google Drive/Academic Work Folder/Ecological forecasting/TickBenchmarkEns/R/benchmark_ens_jags.R",
+    "project_path" : "R/benchmark_ens_jags.R",
+    "properties" : {
+        "cursorPosition" : "25,47",
+        "scrollLine" : "11"
+    },
+    "relative_order" : 4,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_source"
+}

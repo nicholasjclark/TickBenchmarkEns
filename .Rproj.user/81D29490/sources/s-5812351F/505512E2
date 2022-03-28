@@ -1,0 +1,22 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1648420289199.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "0",
+    "id" : "505512E2",
+    "lastKnownWriteTime" : 1634852361,
+    "last_content_update" : 1634852361,
+    "path" : "C:/Users/Nick/Google Drive/Academic Work Folder/Ecological forecasting/NJC_Ticks/neon_tick_convert_preds.R",
+    "project_path" : null,
+    "properties" : {
+        "cursorPosition" : "129,0",
+        "scrollLine" : "0"
+    },
+    "relative_order" : 3,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_source"
+}

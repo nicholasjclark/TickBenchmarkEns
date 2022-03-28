@@ -1,0 +1,22 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1648363853867.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "1705073108",
+    "id" : "7647CFE0",
+    "lastKnownWriteTime" : 1646012872,
+    "last_content_update" : 1646012872,
+    "path" : "C:/Users/Nick/Google Drive/Academic Work Folder/Ecological forecasting/mvgam/R/mvjagam.R",
+    "project_path" : null,
+    "properties" : {
+        "cursorPosition" : "354,10",
+        "scrollLine" : "328"
+    },
+    "relative_order" : 3,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_source"
+}
