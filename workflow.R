@@ -28,19 +28,8 @@ unique_sites <- unique(targets$siteID)
 last_obs_week <- 9
 horizon = 4
 
-# Plotting parameters
-dir.create('Site_forecasts', recursive = T, showWarnings = F)
-c_light <- c("#DCBCBC")
-c_light_trans <- c("#DCBCBC70")
-c_light_highlight <- c("#C79999")
-c_mid <- c("#B97C7C")
-c_mid_highlight <- c("#A25050")
-c_mid_highlight_trans <- c("#A2505095")
-c_dark <- c("#8F2727")
-c_dark_highlight <- c("#7C0000")
-probs <- c(0.05, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.95)
-
 # Loop across sites and produce ensemble benchmark forecasts
+dir.create('Site_forecasts', recursive = T, showWarnings = F)
 site_fcs <- lapply(seq_along(unique_sites), function(site_index){
   cat('\n\nProcessing site', site_index, '...\n')
   
@@ -57,13 +46,11 @@ site_fcs <- lapply(seq_along(unique_sites), function(site_index){
     dplyr::arrange(year, mmwrWeek) -> targets_site
   targets_site[1:which(targets_site$mmwrWeek == last_obs_week &
                          targets_site$year == 2021), ] -> targets_site
-  
   targets_site %>%
     dplyr::mutate(amblyomma_americanum = dplyr::case_when(
       mmwrWeek < 8 ~ 0,
       mmwrWeek > 45 ~ 0,
-      TRUE ~ amblyomma_americanum
-    )) -> targets_site
+      TRUE ~ amblyomma_americanum)) -> targets_site
   
   # Convert outcome to ts object
   y <- ts(targets_site$amblyomma_americanum,
@@ -77,34 +64,15 @@ site_fcs <- lapply(seq_along(unique_sites), function(site_index){
   # Plot the forecast for a sanity check
   pdf(file = paste0('Site_forecasts/', unique_sites[site_index], '.pdf'),
       width = 6.5, height = 4.75)
-  cred <- sapply(1:NCOL(site_fc),
-                 function(n) quantile(site_fc[,n],
-                                      probs = probs))
-  plot(1, type = "n",
-       xlab = 'Time',
-       ylab = paste(unique_sites[site_index], 'forecast distribution'),
-       xlim = c(1, length(y) + horizon),
-       ylim = c(0, min(1000, max(cred))))
-  pred_vals <- seq(1, length(y) + horizon) 
-  polygon(c(pred_vals, rev(pred_vals)), c(cred[1,], rev(cred[9,])),
-          col = c_light, border = NA)
-  polygon(c(pred_vals, rev(pred_vals)), c(cred[2,], rev(cred[8,])),
-          col = c_light_highlight, border = NA)
-  polygon(c(pred_vals, rev(pred_vals)), c(cred[3,], rev(cred[7,])),
-          col = c_mid, border = NA)
-  polygon(c(pred_vals, rev(pred_vals)), c(cred[4,], rev(cred[6,])),
-          col = c_mid_highlight, border = NA)
-  lines(pred_vals, cred[5,], col = c_dark, lwd = 2.5)
-  points(as.vector(y), pch = 16, cex = 0.9, col = 'white')
-  points(as.vector(y), pch = 16, cex = 0.65, col = 'black')
-  abline(v = length(y), lty = 'dashed')
+  plot_posterior(site_fc, y, horizon, 
+                 sitename = unique_sites[site_index],
+                 year = targets_site$year)
   dev.off()
   
   # Return 5000 samples from the posterior forecast distribution
   site_fc <- t(site_fc)
   t(site_fc[(length(y)+1):NROW(site_fc), sample(seq(1, NCOL(site_fc)),
                                                    5000, replace = F)])
-  
 })
 names(site_fcs) <- unique_sites
 
@@ -132,12 +100,9 @@ all_submissions <- do.call(rbind, lapply(seq_along(unique_sites), function(x){
                ensemble = seq(1, NROW(site_fcs[[x]])),
                forecast = 1,
                data_assimilation = 0,
-               amblyomma_americanum = site_fcs[[x]][ , fc_week])
-  }))
-}))
+               amblyomma_americanum = site_fcs[[x]][ , fc_week])}))}))
 
 # Save file as csv in the EFI format
-# [theme_name]-[time]-[team_name].csv
 theme_name <- "ticks"
 time <- as.character(min(all_submissions$time))
 team_name <- "TickBench"
@@ -190,9 +155,8 @@ coverage <-
                     southBoundingCoordinate = -66.885444)
 
 keywordSet <- list(
-  list(
-    keywordThesaurus = "EFI controlled vocabulary",
-    keyword = list("forecast",
+  list(keywordThesaurus = "EFI controlled vocabulary",
+       keyword = list("forecast",
                    "amblyomma",
                    "ensemble",
                    "generalised additive model",
@@ -222,8 +186,7 @@ submit(forecast_file = file_name,
                   metadata = paste0(theme_name, "-", time, "-", team_name, ".xml"), 
                   ask = TRUE)
 check_submission(file_name)
-unlink(file_name)
-unlink(paste0(theme_name, "-", time, "-", team_name, ".xml"))
+unlink(file_name); unlink(paste0(theme_name, "-", time, "-", team_name, ".xml"))
 
 # git commit -a -m "update forecasts"
 # git push

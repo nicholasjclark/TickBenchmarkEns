@@ -134,3 +134,50 @@ benchmark_ens_jags = function(y, season, year, h = 4){
   ypreds
   
 }
+
+#### Function to plot posterior distribution ####
+plot_posterior = function(site_fc, y, horizon, 
+                          sitename = unique_sites[site_index],
+                          year){
+  
+  # Colour scheme
+  c_light <- c("#DCBCBC")
+  c_light_trans <- c("#DCBCBC70")
+  c_light_highlight <- c("#C79999")
+  c_mid <- c("#B97C7C")
+  c_mid_highlight <- c("#A25050")
+  c_mid_highlight_trans <- c("#A2505095")
+  c_dark <- c("#8F2727")
+  c_dark_highlight <- c("#7C0000")
+  
+  # Posterior empirical quantiles
+  probs <- c(0.05, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.95)
+  cred <- sapply(1:NCOL(site_fc),
+                 function(n) quantile(site_fc[,n],
+                                      probs = probs))
+  
+  # Plot
+  plot(1, type = "n",
+       ylab = paste(sitename, 'posterior predictive distribution'),
+       xlim = c(1, length(y) + horizon),
+       ylim = c(0, min(1000, max(cred))),
+       xlab = '',
+       xaxt = 'n')
+  pred_vals <- seq(1, length(y) + horizon) 
+  polygon(c(pred_vals, rev(pred_vals)), c(cred[1,], rev(cred[9,])),
+          col = c_light, border = NA)
+  polygon(c(pred_vals, rev(pred_vals)), c(cred[2,], rev(cred[8,])),
+          col = c_light_highlight, border = NA)
+  polygon(c(pred_vals, rev(pred_vals)), c(cred[3,], rev(cred[7,])),
+          col = c_mid, border = NA)
+  polygon(c(pred_vals, rev(pred_vals)), c(cred[4,], rev(cred[6,])),
+          col = c_mid_highlight, border = NA)
+  lines(pred_vals, cred[5,], col = c_dark, lwd = 2.5)
+  points(as.vector(y), pch = 16, cex = 0.75, col = 'white')
+  points(as.vector(y), pch = 16, cex = 0.5, col = 'black')
+  abline(v = length(y), lty = 'dashed')
+  axis(1, at = seq(0, length(y) + horizon,
+                   b = 52), labels = seq(min(year), max(year)), cex.axis = 1)
+}
+
+
