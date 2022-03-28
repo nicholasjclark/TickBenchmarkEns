@@ -16,7 +16,7 @@ library(mgcv)
 library(EML)
 library(neon4cast) #devtools::install_github('eco4cast/neon4cast')
 
-#### Download tick data from EFI Github directly ####
+#### Download tick data from Ecoforecast repository ####
 read_csv("https://data.ecoforecast.org/targets/ticks/ticks-targets.csv.gz", 
          guess_max = 1e6) %>%
   dplyr::arrange(siteID, time) %>% 
@@ -26,7 +26,7 @@ read_csv("https://data.ecoforecast.org/targets/ticks/ticks-targets.csv.gz",
 source('R/benchmark_ens_jags.R')
 unique_sites <- unique(targets$siteID)
 last_obs_week <- 9
-horizon = 4
+horizon <- 4
 
 # Loop across sites and produce ensemble benchmark forecasts
 dir.create('Site_forecasts', recursive = T, showWarnings = F)
@@ -85,11 +85,8 @@ save(site_fcs, file = 'Forecasts/site_fcs.rda')
 sundays <- seq.Date(lubridate::ymd("2021-01-03"), 
                     by = 7, length.out = 52)
 
-# Forecast mmwrWeeks
-fx_weeks <- (last_obs_week + 1):(last_obs_week + 4)
-
-# Forecast dates
-fx_time <- sundays[fx_weeks]
+# Forecast mmwrWeeks and dates
+fx_weeks <- (last_obs_week + 1):(last_obs_week + 4); fx_time <- sundays[fx_weeks]
 
 # Gather forecasts into the correct format for the EFI Challenge Submission
 load('Forecasts/site_fcs.rda')
@@ -103,15 +100,13 @@ all_submissions <- do.call(rbind, lapply(seq_along(unique_sites), function(x){
                amblyomma_americanum = site_fcs[[x]][ , fc_week])}))}))
 
 # Save file as csv in the EFI format
-theme_name <- "ticks"
+theme_name <- "ticks"; team_name <- "TickBench"
 time <- as.character(min(all_submissions$time))
-team_name <- "TickBench"
 file_name <- paste0(theme_name, "-", time, "-", team_name, ".csv.gz")
 write_csv(all_submissions, file_name)
 
 ##### Format EML file ####
-method_text <- paste(readLines('Metadata/methods.md'), 
-                     collapse = "\n")
+method_text <- paste(readLines('Metadata/methods.md'), collapse = "\n")
 methods <- list(id = "forecast", 
                 methodStep = list(description = 
                                     list(markdown = sub('epidemiological weeks', 
