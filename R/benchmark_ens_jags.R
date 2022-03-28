@@ -1,25 +1,24 @@
 benchmark_ens_jags = function(y, season, year, h = 4){
   
-  # Impute any NAs in y
+  # Impute any NAs in y using a robust seasonal imputation metho
   y_impute <- as.vector(forecast::na.interp(y))
-  
-  y_impute <- ts(y_impute, frequency = 52,
-                 start = c(min(targets_site$year), 1))
+  y_impute <- ts(y_impute, frequency = 52, start = c(min(targets_site$year), 1))
   y_impute[y_impute < 0] <- 0
   
-  # Log(y + 1/6) for benchmark timeseries models
+  # Log(y + 1/6) for the two benchmark timeseries models that require Gaussian responses
+  # (STLM and TBATS)
   log_y_impute <- log(y_impute + 1/6)
   
   # Drop the last (h + 26) observations so that each benchmark's forecast can be somewhat evaluated
   # when quantifying ensemble weights
   indices_train <- 1:(length(y) - (h + 26))
-  log_y <- ts(log_y_impute[indices_train], start = start(y_impute),
-              frequency = frequency(y_impute))
+  log_y_train <- ts(log_y_impute[indices_train], start = start(y_impute),
+                    frequency = frequency(y_impute))
   
   #### Fit benchmark time series models to log(x + 1/6) training series and forecast
   # the full out-of-sample period ####
   # STLM with AR residuals
-  fc_mod <- forecast::stlm(log_y, modelfunction = ar)
+  fc_mod <- forecast::stlm(log_y_train, modelfunction = ar)
   fc_fc <- forecast::forecast(fc_mod, (h * 2) + 26)
   
   # Extract fitted in-sample and forecasted out-of-sample values
@@ -27,12 +26,12 @@ benchmark_ens_jags = function(y, season, year, h = 4){
                                                              fc_fc$mean), na.rm = F)))
   
   # Repeat for TBATS
-  fc_mod <- forecast::tbats(log_y)
+  fc_mod <- forecast::tbats(log_y_train)
   fc_fc <- forecast::forecast(fc_mod, (h * 2) + 26)
   tbats_fit <- c(fc_mod$fitted.values, fc_fc$mean)
   
   # Repeat for a GAM model that uses smooths to jointly model the location and scale of a
-  # gamma distribution for the raw in-sample data
+  # Gamma distribution for the raw in-sample data
   gam_mod <- gam(list(y ~ s(season, bs = 'cc', k = 12) + s(year, bs = 'gp', k = 4), 
                         ~ s(season, bs = 'cc', k = 12) + s(year, bs = 'gp', k = 4)),
                       family = gammals,
@@ -96,8 +95,7 @@ benchmark_ens_jags = function(y, season, year, h = 4){
     stlm_fit = stlm_fit,
     gam_fit = gam_fit,
     tbats_fit = tbats_fit,
-    n = length(y)
-  )
+    n = length(y))
   
   # Run the model using 4 parallel MCMC chains in runjags
   chains <- 4
@@ -132,7 +130,6 @@ benchmark_ens_jags = function(y, season, year, h = 4){
   # Return forecast distribution
   ypreds <- MCMCvis::MCMCchains(model_run, 'ypred')
   ypreds
-  
 }
 
 #### Function to plot posterior distribution ####
