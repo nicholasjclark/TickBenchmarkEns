@@ -12,7 +12,7 @@
 Data Assimilation used: No
 If, DA used - type of method: N/A
 If, DA used - Number of parameters calibrated: N/A
-If, DA used - Sources of training data (DOI, GitHub): N/A
+If, DA used - Sources of training data (DOI, GitHub): https://github.com/nicholasjclark/TickBenchmarkEns
 
 **Model Description**
 

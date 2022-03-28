@@ -222,4 +222,8 @@ submit(forecast_file = file_name,
                   metadata = paste0(theme_name, "-", time, "-", team_name, ".xml"), 
                   ask = TRUE)
 check_submission(file_name)
+unlink(file_name)
+unlink(paste0(theme_name, "-", time, "-", team_name, ".xml"))
 
+# git commit -a -m "update forecasts"
+# git push
