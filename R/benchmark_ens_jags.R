@@ -1,6 +1,6 @@
 benchmark_ens_jags = function(y, season, year, h = 4){
   
-  # Impute any NAs in y using a robust seasonal imputation metho
+  # Impute any NAs in y using a robust seasonal imputation
   y_impute <- as.vector(forecast::na.interp(y))
   y_impute <- ts(y_impute, frequency = 52, start = c(min(targets_site$year), 1))
   y_impute[y_impute < 0] <- 0
@@ -47,7 +47,7 @@ benchmark_ens_jags = function(y, season, year, h = 4){
                         scale = exp(gam_fit[,2])) + 1/6)
   
   #### Use fitted values from each benchmark as weighted predictors for forecasting the raw
-  # original time series ####
+  # original, unimputed time series ####
   y_orig <- y
   y <- c(as.vector(y), rep(NA, h)) + 0.0001
   
