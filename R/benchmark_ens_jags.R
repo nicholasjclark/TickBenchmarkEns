@@ -1,104 +1,162 @@
-benchmark_ens_jags = function(y, season, year, h = 4){
+benchmark_ens_jags = function(y, season, year, h = 4, num_draws = 10, chains = 4){
   
-  # Impute any NAs in y using a robust seasonal imputation
-  y_impute <- as.vector(forecast::na.interp(y))
-  y_impute <- ts(y_impute, frequency = 52, start = c(min(targets_site$year), 1))
-  y_impute[y_impute < 0] <- 0
+  # Set cross-validation indices
+  indices_train <- 1:(length(y) - (h + 52))
   
-  # Log(y + 1/6) for the two benchmark timeseries models that require Gaussian responses
-  # (STLM and TBATS)
-  log_y_impute <- log(y_impute + 1/6)
-  
-  # Drop the last (h + 26) observations so that each benchmark's forecast can be somewhat evaluated
-  # when quantifying ensemble weights
-  indices_train <- 1:(length(y) - (h + 26))
-  log_y_train <- ts(log_y_impute[indices_train], start = start(y_impute),
-                    frequency = frequency(y_impute))
-  
-  #### Fit benchmark time series models to log(x + 1/6) training series and forecast
-  # the full out-of-sample period ####
-  # STLM with AR residuals
-  fc_mod <- forecast::stlm(log_y_train, modelfunction = ar)
-  fc_fc <- forecast::forecast(fc_mod, (h * 2) + 26)
-  
-  # Extract fitted in-sample and forecasted out-of-sample values
-  stlm_fit <- as.vector(forecast::na.interp(zoo::na.approx(c(fc_mod$fitted, 
-                                                             fc_fc$mean), na.rm = F)))
-  
-  # Repeat for TBATS
-  fc_mod <- forecast::tbats(log_y_train)
-  fc_fc <- forecast::forecast(fc_mod, (h * 2) + 26)
-  tbats_fit <- c(fc_mod$fitted.values, fc_fc$mean)
-  
-  # Repeat for a GAM model that uses smooths to jointly model the location and scale of a
-  # Gamma distribution for the raw in-sample data
-  gam_mod <- gam(list(y ~ s(season, bs = 'cc', k = 12) + s(year, bs = 'gp', k = 4), 
-                        ~ s(season, bs = 'cc', k = 12) + s(year, bs = 'gp', k = 4)),
-                      family = gammals,
-                 data = data.frame(y = (y + 0.0001)[indices_train], 
+  # Fit a GAM with Tweedie distributed response
+  gam_mod <- gam(y ~ s(season, bs = 'cc', k = 8) + 
+                   s(year, bs = 'bs', k = 5, m = c(2, 1)) +
+                   ti(season, year, bs = c('cc', 'gp'), k = c(8, 3)),
+                 knots = list(season = c(0.5, 52.5), 
+                              year = c(min(year) - 1, 
+                                       min(year), 
+                                       max(year), 
+                                       max(year) + 1)),
+                 family = tw,
+                 data = data.frame(y = (y)[indices_train], 
                                    season = season[indices_train], 
                                    year = year[indices_train]))
-  gam_fit <- predict(gam_mod, type = 'response', newdata = rbind(data.frame(season = season, year = year),
-                                                      data.frame(season = seq(tail(season, 1),
-                                                                              tail(season, 1) + (h-1)),
-                                                                 year = 2021)))
-  gam_fit <- log(rgamma(n = NROW(gam_fit), 
-                        shape = gam_fit[,1], 
-                        scale = exp(gam_fit[,2])) + 1/6)
+  
+  # Extract posterior GAM expectations for training and testing periods
+  rmvn <- function(n,mu,sig){
+    L <- mroot(sig); m <- ncol(L);
+    t(mu + L %*% matrix(rnorm(m*n), m, n)) 
+  }
+  betas <- rmvn(num_draws, coef(gam_mod), gam_mod$Vp) 
+  Xp <- predict(gam_mod, newdata = data.frame(season = c(season, 
+                                                         seq(tail(season, 1) + 1,
+                                                           tail(season, 1) + (h))), 
+                                              year = c(year,
+                                                       rep(2021, h))), 
+                type = "lpmatrix") 
+  gam_fits <- matrix(NA, nrow = num_draws, ncol = (length(y)+h))
+  for(i in 1:num_draws){ 
+    gam_fits[i, ] <- Xp %*% betas[i,]
+  }
+  
+  # Extract sarima of GAM-imputed training values
+  gam_impute <- function(mu, y){
+    # If y is NA, use a different posterior expectation
+    y_working <- vector()
+    for(i in 1:(length(y)+h)){
+      y_working[i] <- ifelse(is.na(y[i]), mu[i], log(y[i] + 0.0001))
+    }
+    y_working 
+  }
+  
+  gam_imputed <- matrix(NA, nrow = num_draws, ncol = (length(y) + h))
+  for(i in 1:num_draws){
+    gam_imputed[i, ] <- gam_impute(mu = gam_fits[i,],
+                                   y = y)
+  }
+
+  #### Fit benchmark time series models to log-imputed training series and forecast
+  # the full out-of-sample period ####
+  arima_mod <- forecast::auto.arima(ts(gam_imputed[1, ], 
+                                       start = c(min(year), 1),
+                                       frequency = 52),
+                                    nmodels = 40, approximation = TRUE)
+  cl <- parallel::makePSOCKcluster(min(c(chains, parallel::detectCores() - 2)))
+  setDefaultCluster(cl)
+  clusterExport(NULL, c('gam_imputed',
+                        'year',
+                        'h',
+                        'y',
+                        'indices_train',
+                        'arima_mod'),
+                envir = environment())
+  clusterEvalQ(cl, library(forecast))
+  clusterEvalQ(cl, library(zoo))
+  
+  pbapply::pboptions(type = "none")
+  fc_mod_fits <- pbapply::pblapply(seq_len(num_draws), function(i){
+    imputed_ts <- ts(gam_imputed[i, indices_train], 
+                       start = c(min(year), 1),
+                       frequency = 52)
+    
+    # STLM with AR residuals
+    fc_mod <- forecast::stlm(imputed_ts, modelfunction = ar)
+    fc_fc <- forecast::forecast(fc_mod, (h * 2) + 52)
+    # Extract fitted in-sample and forecasted out-of-sample values
+    stlm_fits <- as.vector(forecast::na.interp(zoo::na.approx(c(fc_mod$fitted, 
+                                                                         fc_fc$mean), na.rm = F)))
+    
+    # Repeat for SARIMA
+    fc_mod <- forecast::Arima(imputed_ts, model = arima_mod)
+    fc_fc <- forecast::forecast(fc_mod, (h * 2) + 52)
+    arima_fits <- c(fc_mod$fitted, fc_fc$mean)
+    list(stlm_fits = stlm_fits,
+         arima_fits = arima_fits)
+    
+  }, cl = cl)
+  stopCluster(cl)
+  
+  stlm_fits <- do.call(rbind, purrr::map(fc_mod_fits, 'stlm_fits'))
+  arima_fits <- do.call(rbind, purrr::map(fc_mod_fits, 'arima_fits'))
+  rm(fc_mod_fits)
   
   #### Use fitted values from each benchmark as weighted predictors for forecasting the raw
-  # original, unimputed time series ####
+  # original time series ####
+  # Add a small offset so there are no exact zeros; won't impact forecasts
+  # or inference but will stop problems due to starting values for the Gamma
+  # parameters
   y_orig <- y
   y <- c(as.vector(y), rep(NA, h)) + 0.0001
+  
+  # Forecast values get higher weights than fitted (training) values
+  weight <- c(rep(1, length(indices_train)),
+              rep(1.5, (h * 2) + 52))
   
   model_code <- " model {
   
   ## Mean expectation (shape) linear predictor
   for (i in 1:n) {
-   mu[i] <- exp(alpha + 
-                beta[1] * stlm_fit[i] + 
-                beta[2] * gam_fit[i] +
-                beta[3] * tbats_fit[i] +
-                trend[i])
+   mu[i] <- exp(beta[1] * gam_fits[K, i] + 
+                beta[2] * stlm_fits[K, i] + 
+                beta[3] * arima_fits[K, i])
   }
-
-  ## Random walk trend to capture any remaining temporal autocorrelation
-  trend[1] ~ dnorm(0, tau)
-  for (i in 2:n){
-   trend[i] ~ dnorm(trend[i - 1], tau)
-  }
-
-  ## Gamma likelihood
+  
+  ## Likelihood function
   for (i in 1:n) {
-   y[i] ~ dgamma(mu[i], lambda)
+   y[i] ~ dgamma(mu[i], lambda * weight[i])
   }
   
   ## Posterior predictions
   for (i in 1:n) {
-   ypred_raw[i] ~ dgamma(mu[i], lambda);
-   ypred[i] <- max(ypred_raw[i] - 0.0001, 0)
+   ypred[i] ~ dgamma(mu[i], lambda * weight[i])
   }
   
-  ## Priors, accounting for likely correlation among model weights
+  ## Priors
+  # Account for likely correlation among model weights
+  lambda ~ dexp(3)
   beta[1:3] ~ dmnorm(zeros, Omega)
+  # Rename betas for easier extraction
+  beta_gam <- beta[1]
+  beta_stlm <- beta[2]
+  beta_arima <- beta[3]
   Omega ~ dscaled.wishart(scales, 2)
   zeros <- c(0, 0, 0)
-  alpha ~ dunif(-1, 1)
-  lambda ~ dexp(1)
-  sigma ~ dexp(2.5)
-  tau <- pow(sigma, -2)
+  
+  # Design matrices (sample with equal probabilities)
+  K ~ dcat(design_probs)
+  for (k in 1:num_draws) {
+    design_probs[k] <- 1
+  }
 }"
 
   jags_data <- list(
     y = y,
     scales = rep(1, 3),
-    stlm_fit = stlm_fit,
-    gam_fit = gam_fit,
-    tbats_fit = tbats_fit,
+    stlm_fits = stlm_fits,
+    gam_fits = gam_fits,
+    arima_fits = arima_fits,
+    num_draws = num_draws,
+    weight = weight,
     n = length(y))
   
   # Run the model using 4 parallel MCMC chains in runjags
-  chains <- 4
+  initlist <- replicate(chains, list(beta = runif(3, -1, 1)),
+                        simplify = FALSE)
   cl <- parallel::makePSOCKcluster(min(c(chains, parallel::detectCores() - 1)))
   setDefaultCluster(cl)
   unlink('jags_mod.txt')
@@ -107,28 +165,133 @@ benchmark_ens_jags = function(y, season, year, h = 4){
     data = jags_data,
     n.chains = chains,
     modules = 'glm',
-    adapt = 10000,
-    burnin = 5000,
-    sample = 5000,
-    thin = 5,
+    adapt = 2000,
+    burnin = 2000,
+    sample = 2000,
+    thin = 2,
+    inits = initlist,
     method = "rjparallel",
     monitor = c('ypred',
-                'sigma',
-                'beta'),
+                'lambda',
+                'beta_gam',
+                'beta_stlm',
+                'beta_arima'),
     cl = cl,
-    model = 'jags_mod.txt'
-  )
+    model = 'jags_mod.txt')
   stopCluster(cl)
   model_run <- coda::as.mcmc.list(model_run)
   unlink('jags_mod.txt')
   
   # Visualise weight posteriors as a very simple sanity check of convergence
-  MCMCvis::MCMCtrace(model_run, c('beta'), pdf = F, n.eff = T,
-                     main_den = c('stlm', 'gam', 'tbats'),
-                     main_tr = c('stlm', 'gam', 'tbats'))
+  MCMCvis::MCMCtrace(model_run, c('beta_gam',
+                                  'beta_stlm',
+                                  'beta_arima',
+                                  'lambda'), pdf = F, n.eff = T)
+  
+  #### Refit all benchmark models to the entire observation history and produce forecasts;
+  # then weight forecasts according to the estimated weights from the JAGS model ####
+  # Re-estimated GAM
+  gam_mod <- gam(y ~ s(season, bs = 'cc', k = 8) + 
+                   s(year, bs = 'bs', k = 5, m = c(2, 1)) +
+                   ti(season, year, bs = c('cc', 'gp'), k = c(8, 3)),
+                 knots = list(season = c(0.5, 52.5), 
+                              year = c(min(year) - 1, 
+                                       min(year), 
+                                       max(year), 
+                                       max(year) + 1)),
+                 family = tw,
+                 data = data.frame(y = y_orig, 
+                                   season = season, 
+                                   year = year))
+  betas <- rmvn(num_draws, coef(gam_mod), gam_mod$Vp) 
+  Xp <- predict(gam_mod, newdata = data.frame(season = c(season, 
+                                                         seq(tail(season, 1) + 1,
+                                                             tail(season, 1) + (h))), 
+                                              year = c(year,
+                                                       rep(2021, h))), 
+                type = "lpmatrix") 
+  gam_fits <- matrix(NA, nrow = num_draws, ncol = (length(y_orig)+h))
+  for(i in 1:num_draws){ 
+    gam_fits[i, ] <- Xp %*% betas[i,]
+  }
+  gam_imputed <- matrix(NA, nrow = num_draws, ncol = (length(y_orig) + h))
+  for(i in 1:num_draws){
+    gam_imputed[i, ] <- gam_impute(mu = gam_fits[i,],
+                                   y = y_orig)
+  }
+  
+  cl <- parallel::makePSOCKcluster(min(c(chains, parallel::detectCores() - 2)))
+  setDefaultCluster(cl)
+  clusterExport(NULL, c('gam_imputed',
+                        'year',
+                        'h',
+                        'y_orig',
+                        'arima_mod'),
+                envir = environment())
+  clusterEvalQ(cl, library(forecast))
+  clusterEvalQ(cl, library(zoo))
+  
+  pbapply::pboptions(type = "none")
+  fc_mod_fits <- pbapply::pblapply(seq_len(num_draws), function(i){
+    imputed_ts <- ts(gam_imputed[i, 1:length(y_orig)], 
+                       start = c(min(year), 1),
+                       frequency = 52)
+    
+    # STLM with AR residuals
+    fc_mod <- forecast::stlm(imputed_ts, modelfunction = ar)
+    fc_fc <- forecast::forecast(fc_mod, h)
+    # Extract fitted in-sample and forecasted out-of-sample values
+    stlm_fits <- as.vector(forecast::na.interp(zoo::na.approx(c(fc_mod$fitted, 
+                                                                     fc_fc$mean), na.rm = F)))
+    
+    # Repeat for arima
+    fc_mod <- forecast::Arima(imputed_ts, model = arima_mod)
+    fc_fc <- forecast::forecast(fc_mod, h)
+    arima_fits <- c(fc_mod$fitted, fc_fc$mean)
+    list(stlm_fits = stlm_fits,
+         arima_fits = arima_fits)
+    
+  }, cl = cl)
+  stopCluster(cl)
+  
+  stlm_fits <- do.call(rbind, purrr::map(fc_mod_fits, 'stlm_fits'))
+  arima_fits <- do.call(rbind, purrr::map(fc_mod_fits, 'arima_fits'))
+  rm(fc_mod_fits)
+  
+  # Extract posterior parameter estimates
+  beta_gams <- MCMCvis::MCMCchains(model_run, 'beta_gam')
+  beta_stlms <- MCMCvis::MCMCchains(model_run, 'beta_stlm')
+  beta_arimas <- MCMCvis::MCMCchains(model_run, 'beta_arima')
+  lambdas <- MCMCvis::MCMCchains(model_run, 'lambda')
+  
+  ypreds <- do.call(rbind, lapply(seq_len(2000), function(x){
+    # Sample indices
+    design_index <- sample(1:num_draws, 1, T)
+    param_index <- sample(1:NROW(beta_gams), 1, T)
+    
+    # Sampled design matrix
+    gam_fits_samp <- gam_fits[design_index, ]
+    stlm_fits_samp <- stlm_fits[design_index, ]
+    arima_fits_samp <- arima_fits[design_index, ]
+    
+    # Sampled parameters
+    b_gam <- beta_gams[param_index,]
+    b_stlm <- beta_stlms[param_index,]
+    b_arima <- beta_arimas[param_index,]
+    lambda <- lambdas[param_index,]
+    
+    # Posterior expectations
+    mu <- exp(b_gam * gam_fits_samp + 
+              b_stlm * stlm_fits_samp + 
+              b_arima * arima_fits_samp)
+    
+    # Posterior predictions (include the weights for forecasted values)
+    rgamma(length(mu),
+           shape = mu, 
+           rate = lambda * 1.5)
+  }))
   
   # Return forecast distribution
-  ypreds <- MCMCvis::MCMCchains(model_run, 'ypred')
   ypreds
 }
 
@@ -136,6 +299,10 @@ benchmark_ens_jags = function(y, season, year, h = 4){
 plot_posterior = function(site_fc, y, horizon, 
                           sitename = unique_sites[site_index],
                           year){
+  
+  .pardefault <- par(no.readonly=T)
+  par(.pardefault)
+  par(mfrow = c(1, 1))
   
   # Colour scheme
   c_light <- c("#DCBCBC")
@@ -175,6 +342,7 @@ plot_posterior = function(site_fc, y, horizon,
   abline(v = length(y), lty = 'dashed')
   axis(1, at = seq(0, length(y) + horizon,
                    b = 52), labels = seq(min(year), max(year)), cex.axis = 1)
+  par(.pardefault)
 }
 
 

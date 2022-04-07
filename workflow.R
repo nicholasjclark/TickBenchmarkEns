@@ -11,6 +11,7 @@ library(runjags)
 library(parallel)
 library(MCMCvis)
 library(mgcv)
+library(parallel)
 
 # Metadata and forecast submission
 library(EML)
@@ -59,7 +60,8 @@ site_fcs <- lapply(seq_along(unique_sites), function(site_index){
   # Run the benchmark ensemble model to produce the forecast distribution
   site_fc <- benchmark_ens_jags(y, season = targets_site$mmwrWeek,
                                 year = targets_site$year,
-                                h = horizon)
+                                h = horizon,
+                                num_draws = 100)
   
   # Plot the forecast for a sanity check
   pdf(file = paste0('Site_forecasts/', unique_sites[site_index], '.pdf'),
@@ -69,10 +71,10 @@ site_fcs <- lapply(seq_along(unique_sites), function(site_index){
                  year = targets_site$year)
   dev.off()
   
-  # Return 5000 samples from the posterior forecast distribution
+  # Return 2000 samples from the posterior forecast distribution
   site_fc <- t(site_fc)
   t(site_fc[(length(y)+1):NROW(site_fc), sample(seq(1, NCOL(site_fc)),
-                                                   5000, replace = F)])
+                                                   2000, replace = F)])
 })
 names(site_fcs) <- unique_sites
 
